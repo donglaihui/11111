@@ -17,6 +17,7 @@ const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isLocalMode, setIsLocalMode] = useState(false);
   
   const [deviceId] = useState(() => {
     let id = localStorage.getItem('deviceId');
@@ -38,22 +39,33 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const initData = async () => {
+      // 容错机制：如果 8 秒还没加载完，可能网络有问题
+      const timeoutId = setTimeout(() => {
+        if (loading) {
+          setError("连接超时，正在尝试本地模式...");
+          switchToLocal();
+        }
+      }, 8000);
+
+      const switchToLocal = () => {
+        setIsLocalMode(true);
+        const saved = localStorage.getItem('messages');
+        setMessages(saved ? JSON.parse(saved) : INITIAL_MESSAGES_SEED);
+        setLoading(false);
+      };
+
       try {
         setLoading(true);
         setError(null);
 
         if (!supabase) {
-          console.warn('正在以本地模式运行');
-          const saved = localStorage.getItem('messages');
-          setMessages(saved ? JSON.parse(saved) : INITIAL_MESSAGES_SEED);
-          setLoading(false);
+          switchToLocal();
           return;
         }
 
         // 获取消息
         const cloudMessages = await db.getMessages();
         if (cloudMessages.length === 0) {
-          // 仅在完全为空时注入种子
           await db.batchInsertMessages(INITIAL_MESSAGES_SEED);
           const reFetched = await db.getMessages();
           setMessages(reFetched);
@@ -70,11 +82,10 @@ const App: React.FC = () => {
         }
       } catch (e: any) {
         console.error('初始化失败:', e);
-        setError(e.message || '连接服务器失败，请稍后刷新。');
-        // 即使出错也尝试加载本地缓存
-        const saved = localStorage.getItem('messages');
-        if (saved) setMessages(JSON.parse(saved));
+        setError("正在使用本地离线模式 (错误: " + (e.message || 'Unknown') + ")");
+        switchToLocal();
       } finally {
+        clearTimeout(timeoutId);
         setLoading(false);
       }
     };
@@ -85,7 +96,7 @@ const App: React.FC = () => {
   const handleAddMessage = async (to: string, content: string) => {
     const newMessage = { to, content, timestamp: Date.now(), isPinned: false };
     try {
-      if (supabase) {
+      if (supabase && !isLocalMode) {
         await db.addMessage(newMessage);
         const updated = await db.getMessages();
         setMessages(updated);
@@ -111,10 +122,12 @@ const App: React.FC = () => {
   const executeDelete = async () => {
     if (confirmDeleteId) {
       try {
-        if (supabase) {
+        if (supabase && !isLocalMode) {
           await db.deleteMessage(confirmDeleteId);
         }
-        setMessages(prev => prev.filter(m => m.id !== confirmDeleteId));
+        const next = messages.filter(m => m.id !== confirmDeleteId);
+        setMessages(next);
+        if (isLocalMode) localStorage.setItem('messages', JSON.stringify(next));
       } catch (e) {
         alert('删除失败');
       }
@@ -132,12 +145,14 @@ const App: React.FC = () => {
 
     try {
       const nextPinState = !target.isPinned;
-      if (supabase) {
+      if (supabase && !isLocalMode) {
         await db.togglePin(id, nextPinState);
         const updated = await db.getMessages();
         setMessages(updated);
       } else {
-        setMessages(prev => prev.map(m => m.id === id ? { ...m, isPinned: nextPinState } : m));
+        const next = messages.map(m => m.id === id ? { ...m, isPinned: nextPinState } : m);
+        setMessages(next);
+        localStorage.setItem('messages', JSON.stringify(next));
       }
     } catch (e) {
       alert('操作失败');
@@ -148,21 +163,30 @@ const App: React.FC = () => {
     const upgradedUser = { ...user, isVip: true };
     setUser(upgradedUser);
     setIsVIPModalOpen(false);
-    if (supabase) {
+    if (supabase && !isLocalMode) {
       await db.upsertProfile(deviceId, upgradedUser);
     }
   };
 
   const handleUpdateUser = async (updated: UserProfile) => {
     setUser(updated);
-    if (supabase) {
+    if (supabase && !isLocalMode) {
       await db.upsertProfile(deviceId, updated);
     }
   };
 
+  // 基础 Shell 结构：始终渲染
   return (
-    <div className="min-h-screen pb-24 flex flex-col items-center bg-[#F5F5F7]">
-      <header className="w-full max-w-lg px-8 pt-16 pb-8 flex flex-col items-start gap-1">
+    <div className="min-h-screen pb-24 flex flex-col items-center bg-[#F5F5F7] selection:bg-[#0071E3]/20">
+      {/* 调试模式标识 */}
+      <div className="w-full bg-[#1D1D1F] text-white text-[10px] py-1 px-4 flex justify-between items-center font-mono opacity-80 fixed top-0 z-[100]">
+        <span>TreeHole Debug Mode</span>
+        <span className={isLocalMode ? "text-yellow-400" : "text-green-400"}>
+          {isLocalMode ? "LOCAL_MODE" : "CLOUD_SYNCED"}
+        </span>
+      </div>
+
+      <header className="w-full max-w-lg px-8 pt-20 pb-8 flex flex-col items-start gap-1">
         <h1 className="text-[34px] font-bold tracking-tight text-[#1D1D1F]">
           {activeTab === 'hole' ? '树' : '我的'}
         </h1>
@@ -171,38 +195,44 @@ const App: React.FC = () => {
         </p>
       </header>
 
+      {/* 仅内容区域根据状态切换 */}
       <main className="w-full max-w-lg px-5 flex-1">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-32 gap-5">
             <div className="w-6 h-6 border-2 border-[#0071E3]/20 border-t-[#0071E3] rounded-full animate-spin"></div>
             <p className="text-xs text-[#86868B] font-medium tracking-widest uppercase">正在连接数据库...</p>
           </div>
-        ) : error ? (
-          <div className="flex flex-col items-center justify-center py-32 gap-4 text-center">
-            <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center text-red-500">!</div>
-            <p className="text-sm text-red-500 px-10">{error}</p>
-            <button onClick={() => window.location.reload()} className="text-[#0071E3] text-sm font-bold">点击重试</button>
-          </div>
         ) : (
-          activeTab === 'hole' ? (
-            <TreeHole 
-              messages={messages} 
-              onAddMessage={handleAddMessage}
-              onDeleteMessage={requestDelete}
-              onPinMessage={handlePinMessage}
-              isVip={user.isVip}
-            />
-          ) : (
-            <Profile 
-              user={user} 
-              onUpdateUser={handleUpdateUser} 
-              onShowVIPModal={() => setIsVIPModalOpen(true)}
-            />
-          )
+          <>
+            {error && (
+               <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-xl text-[11px] text-yellow-700 flex items-center gap-2">
+                 <span className="flex-shrink-0 w-4 h-4 bg-yellow-200 rounded-full flex items-center justify-center text-[10px]">!</span>
+                 {error}
+               </div>
+            )}
+            
+            {activeTab === 'hole' ? (
+              <TreeHole 
+                messages={messages} 
+                onAddMessage={handleAddMessage}
+                onDeleteMessage={requestDelete}
+                onPinMessage={handlePinMessage}
+                isVip={user.isVip}
+              />
+            ) : (
+              <Profile 
+                user={user} 
+                onUpdateUser={handleUpdateUser} 
+                onShowVIPModal={() => setIsVIPModalOpen(true)}
+              />
+            )}
+          </>
         )}
       </main>
 
+      {/* 底部导航栏始终可见 */}
       <TabBar activeTab={activeTab} setActiveTab={setActiveTab} />
+      
       <VIPModal isOpen={isVIPModalOpen} onClose={() => setIsVIPModalOpen(false)} onUpgrade={handleUpgradeVip} />
 
       {confirmDeleteId && (
@@ -213,8 +243,8 @@ const App: React.FC = () => {
               <h3 className="text-lg font-bold mb-1">确认删除？</h3>
               <p className="text-xs text-[#86868B]">此操作无法撤销。</p>
             </div>
-            <div className="flex border-t border-gray-200">
-              <button onClick={() => setConfirmDeleteId(null)} className="flex-1 py-4 text-[#0071E3] text-sm font-medium border-r border-gray-200">取消</button>
+            <div className="flex border-t border-gray-100">
+              <button onClick={() => setConfirmDeleteId(null)} className="flex-1 py-4 text-[#0071E3] text-sm font-medium border-r border-gray-100">取消</button>
               <button onClick={executeDelete} className="flex-1 py-4 text-[#FF3B30] text-sm font-bold">删除</button>
             </div>
           </div>

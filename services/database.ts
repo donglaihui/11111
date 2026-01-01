@@ -28,8 +28,8 @@ export const db = {
         isPinned: !!item.is_pinned
       }));
     } catch (e) {
-      console.error('Failed to fetch messages:', e);
-      return [];
+      console.error('Database getMessages error:', e);
+      throw e; // 抛出让 App.tsx 捕获并切入本地模式
     }
   },
 
@@ -46,7 +46,7 @@ export const db = {
 
   async deleteMessage(id: string) {
     if (!supabase) return;
-    // 处理可能的 UUID 或数字 ID
+    // 自动兼容 UUID 或数字
     const { error } = await supabase.from('messages').delete().eq('id', id);
     if (error) throw error;
   },
@@ -61,27 +61,34 @@ export const db = {
     if (!supabase) return null;
     try {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', deviceId).single();
-      if (error && error.code !== 'PGRST116') throw error;
+      if (error) {
+        if (error.code === 'PGRST116') return null; // 正常情况：查无此人
+        throw error;
+      }
       return data ? {
         nickname: data.nickname,
         avatar: data.avatar,
         isVip: !!data.is_vip
       } : null;
     } catch (e) {
-      console.warn('Profile fetch error:', e);
-      return null;
+      console.warn('Database getProfile error:', e);
+      return null; // 个人资料失败不应阻塞整个应用
     }
   },
 
   async upsertProfile(deviceId: string, profile: UserProfile) {
     if (!supabase) return;
-    const { error } = await supabase.from('profiles').upsert({
-      id: deviceId,
-      nickname: profile.nickname,
-      avatar: profile.avatar,
-      is_vip: profile.isVip
-    });
-    if (error) throw error;
+    try {
+      const { error } = await supabase.from('profiles').upsert({
+        id: deviceId,
+        nickname: profile.nickname,
+        avatar: profile.avatar,
+        is_vip: profile.isVip
+      }, { onConflict: 'id' });
+      if (error) throw error;
+    } catch (e) {
+      console.error('Upsert profile failed:', e);
+    }
   },
 
   async batchInsertMessages(messages: any[]) {
@@ -93,6 +100,6 @@ export const db = {
       is_pinned: m.isPinned
     }));
     const { error } = await supabase.from('messages').insert(payload);
-    if (error) throw error;
+    if (error) console.error('Batch insert failed:', error);
   }
 };

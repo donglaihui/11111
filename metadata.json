@@ -1,0 +1,7 @@
+{
+  "name": "Apple Style Tree Hole",
+  "description": "A minimalist, Apple-designed tree hole application for leaving and searching anonymous messages with VIP features.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

@@ -38,8 +38,12 @@ const App: React.FC = () => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
+    // 如果 supabase 实例不存在，立即弹出 alert 提醒
+    if (!supabase) {
+      window.alert('数据库连接失败：环境变量 VITE_SUPABASE_URL 或 VITE_SUPABASE_ANON_KEY 未正确配置。');
+    }
+
     const initData = async () => {
-      // 容错机制：如果 8 秒还没加载完，可能网络有问题
       const timeoutId = setTimeout(() => {
         if (loading) {
           setError("连接超时，正在尝试本地模式...");
@@ -63,7 +67,6 @@ const App: React.FC = () => {
           return;
         }
 
-        // 获取消息
         const cloudMessages = await db.getMessages();
         if (cloudMessages.length === 0) {
           await db.batchInsertMessages(INITIAL_MESSAGES_SEED);
@@ -73,7 +76,6 @@ const App: React.FC = () => {
           setMessages(cloudMessages);
         }
 
-        // 获取个人资料
         const cloudProfile = await db.getProfile(deviceId);
         if (cloudProfile) {
           setUser(cloudProfile);
@@ -175,10 +177,9 @@ const App: React.FC = () => {
     }
   };
 
-  // 基础 Shell 结构：始终渲染
   return (
     <div className="min-h-screen pb-24 flex flex-col items-center bg-[#F5F5F7] selection:bg-[#0071E3]/20">
-      {/* 调试模式标识 */}
+      {/* 调试模式标识 - 强制优先渲染 */}
       <div className="w-full bg-[#1D1D1F] text-white text-[10px] py-1 px-4 flex justify-between items-center font-mono opacity-80 fixed top-0 z-[100]">
         <span>TreeHole Debug Mode</span>
         <span className={isLocalMode ? "text-yellow-400" : "text-green-400"}>
@@ -195,12 +196,12 @@ const App: React.FC = () => {
         </p>
       </header>
 
-      {/* 仅内容区域根据状态切换 */}
+      {/* 静态骨架内容区域 */}
       <main className="w-full max-w-lg px-5 flex-1">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-32 gap-5">
             <div className="w-6 h-6 border-2 border-[#0071E3]/20 border-t-[#0071E3] rounded-full animate-spin"></div>
-            <p className="text-xs text-[#86868B] font-medium tracking-widest uppercase">正在连接数据库...</p>
+            <div className="text-xs text-[#86868B] font-medium tracking-widest uppercase">树洞加载中...</div>
           </div>
         ) : (
           <>
@@ -230,7 +231,6 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* 底部导航栏始终可见 */}
       <TabBar activeTab={activeTab} setActiveTab={setActiveTab} />
       
       <VIPModal isOpen={isVIPModalOpen} onClose={() => setIsVIPModalOpen(false)} onUpgrade={handleUpgradeVip} />

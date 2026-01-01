@@ -2,16 +2,28 @@
 import { createClient } from '@supabase/supabase-js';
 import { Message, UserProfile } from '../types';
 
-const SUPABASE_URL: string = 'https://figlppwzmunsmevxcvzh.supabase.co'; 
-const SUPABASE_ANON_KEY: string = 'sb_publishable_Sf1NAudfPiva7SXjILN3Fw_r_cE1xn9';
+// 根据用户要求，使用 import.meta.env 适配 Vercel/Vite 环境变量
+const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://figlppwzmunsmevxcvzh.supabase.co';
+const SUPABASE_ANON_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Sf1NAudfPiva7SXjILN3Fw_r_cE1xn9';
 
-export const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) 
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) 
-  : null;
+let supabaseInstance = null;
+
+try {
+  if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+    supabaseInstance = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  } else {
+    console.warn('Supabase configuration missing.');
+  }
+} catch (e) {
+  console.error('Failed to initialize Supabase client:', e);
+  // 在模块加载阶段如果不成功，后续 App.tsx 会弹出 alert
+}
+
+export const supabase = supabaseInstance;
 
 export const db = {
   async getMessages(): Promise<Message[]> {
-    if (!supabase) return [];
+    if (!supabase) throw new Error('Supabase not initialized');
     try {
       const { data, error } = await supabase
         .from('messages')
@@ -29,7 +41,7 @@ export const db = {
       }));
     } catch (e) {
       console.error('Database getMessages error:', e);
-      throw e; // 抛出让 App.tsx 捕获并切入本地模式
+      throw e;
     }
   },
 
@@ -46,7 +58,6 @@ export const db = {
 
   async deleteMessage(id: string) {
     if (!supabase) return;
-    // 自动兼容 UUID 或数字
     const { error } = await supabase.from('messages').delete().eq('id', id);
     if (error) throw error;
   },
@@ -62,7 +73,7 @@ export const db = {
     try {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', deviceId).single();
       if (error) {
-        if (error.code === 'PGRST116') return null; // 正常情况：查无此人
+        if (error.code === 'PGRST116') return null;
         throw error;
       }
       return data ? {
@@ -72,7 +83,7 @@ export const db = {
       } : null;
     } catch (e) {
       console.warn('Database getProfile error:', e);
-      return null; // 个人资料失败不应阻塞整个应用
+      return null;
     }
   },
 
